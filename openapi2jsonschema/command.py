@@ -181,6 +181,8 @@ def default(output, schema, prefix, stand_alone, kubernetes, strict):
         components = data['components']['schemas']
 
     for title in components:
+        group = title.split('.')[-3].lower()
+        api_version = title.split('.')[-2].lower()
         kind = title.split('.')[-1].lower()
         specification = components[title]
         specification["$schema"] = "http://json-schema.org/schema#"
@@ -189,7 +191,7 @@ def default(output, schema, prefix, stand_alone, kubernetes, strict):
         types.append(title)
 
         try:
-            debug("Processing %s" % kind)
+            debug("Processing %s, %s" % (kind, api_version))
 
             updated = change_dict_values(specification, prefix, version)
             specification = updated
@@ -217,7 +219,11 @@ def default(output, schema, prefix, stand_alone, kubernetes, strict):
                 updated = allow_null_optional_fields(updated)
                 specification["properties"] = updated
 
-            schema_file_name = "%s.json" % kind
+            if group == "api":
+                schema_file_name = "%s-%s.json" % (kind, api_version)
+            else:
+                schema_file_name = "%s-%s-%s.json" % (kind, group, api_version)
+
             with open("%s/%s" % (output, schema_file_name), 'w') as schema_file:
                 debug("Generating %s" % schema_file_name)
                 schema_file.write(json.dumps(specification, indent=2))
