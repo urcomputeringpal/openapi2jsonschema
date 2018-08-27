@@ -121,6 +121,17 @@ def error(message):
     click.echo(click.style(message, fg='red'))
 
 
+def group_version_kind(title):
+    return title.lower().split('.')[-3:]
+
+
+def output_filename(group, version, kind):
+    if group == "core":
+        return "%s-%s.json" % (kind, version)
+    else:
+        return "%s-%s-%s.json" % (kind, group, version)
+
+
 @click.command()
 @click.option('-o', '--output', default='schemas', metavar='PATH', help='Directory to store schema files')
 @click.option('-p', '--prefix', default='_definitions.json', help='Prefix for JSON references (only for OpenAPI versions before 3.0)')
@@ -132,7 +143,7 @@ def default(output, schema, prefix, stand_alone, kubernetes, strict):
     """
     Converts a valid OpenAPI specification into a set of JSON Schema files
     """
-    info("Downloading schema")
+    info("Downloading schema %s" % schema)
     if sys.version_info < (3, 0):
 
         response = urllib.urlopen(schema)
@@ -142,7 +153,7 @@ def default(output, schema, prefix, stand_alone, kubernetes, strict):
         req = urllib.request.Request(schema)
         response = urllib.request.urlopen(req)
 
-    info("Parsing schema")
+    info("Parsing schema %s" % schema)
     # Note that JSON is valid YAML, so we can use the YAML parser whether
     # the schema is stored in JSON or YAML
     data = yaml.load(response.read())
@@ -172,8 +183,6 @@ def default(output, schema, prefix, stand_alone, kubernetes, strict):
                 definitions = additional_properties(definitions)
             definitions_file.write(json.dumps({"definitions": definitions}, indent=2))
 
-    types = []
-
     info("Generating individual schemas")
     if version < '3':
         components = data['definitions']
@@ -181,14 +190,14 @@ def default(output, schema, prefix, stand_alone, kubernetes, strict):
         components = data['components']['schemas']
 
     for title in components:
-        group = title.split('.')[-3].lower()
-        api_version = title.split('.')[-2].lower()
-        kind = title.split('.')[-1].lower()
+        if title.startswith('io.k8s.kubernetes.pkg.apis'):
+            continue
+        group, api_version, kind = group_version_kind(title)
+        if group == "api":
+            continue
         specification = components[title]
         specification["$schema"] = "http://json-schema.org/schema#"
         specification.setdefault("type", "object")
-
-        types.append(title)
 
         try:
             debug("Processing %s, %s" % (kind, api_version))
@@ -205,24 +214,29 @@ def default(output, schema, prefix, stand_alone, kubernetes, strict):
                 base = "file://%s/%s/" % (os.getcwd(), output)
                 specification = JsonRef.replace_refs(specification, base_uri=base)
 
-            if "additionalProperties" in specification:
-                if specification["additionalProperties"]:
-                    updated = change_dict_values(specification["additionalProperties"], prefix, version)
-                    specification["additionalProperties"] = updated
+                if "additionalProperties" in specification:
+                    if specification["additionalProperties"]:
+                        updated = change_dict_values(specification["additionalProperties"], prefix, version)
+                        specification["additionalProperties"] = updated
 
-            if strict and "properties" in specification:
-                updated = additional_properties(specification["properties"])
-                specification["properties"] = updated
+                if "properties" in specification:
+                    if strict:
+                        updated = additional_properties(specification["properties"])
+                        specification["properties"] = updated
 
-            if kubernetes and "properties" in specification:
-                updated = replace_int_or_string(specification["properties"])
-                updated = allow_null_optional_fields(updated)
-                specification["properties"] = updated
-
-            if group == "api":
-                schema_file_name = "%s-%s.json" % (kind, api_version)
+                    if kubernetes:
+                        updated = replace_int_or_string(specification["properties"])
+                        updated = allow_null_optional_fields(updated)
+                        specification["properties"] = updated
             else:
-                schema_file_name = "%s-%s-%s.json" % (kind, group, api_version)
+                specification = {
+                    "$schema": specification['$schema'],
+                    "$ref": "_definitions.json#/definitions/%s" % title,
+                    "description": specification.get('description'),
+                    "type": specification['type']
+                }
+
+            schema_file_name = output_filename(group, api_version, kind)
 
             with open("%s/%s" % (output, schema_file_name), 'w') as schema_file:
                 debug("Generating %s" % schema_file_name)
@@ -233,12 +247,18 @@ def default(output, schema, prefix, stand_alone, kubernetes, strict):
     with open("%s/all.json" % output, 'w') as all_file:
         info("Generating schema for all types")
         contents = {"oneOf": []}
-        for title in types:
+        for title in components:
             if version < '3':
-                contents["oneOf"].append({"$ref": "%s#/definitions/%s" % (prefix, title)})
+                if stand_alone:
+                    contents["oneOf"].append({"$ref": "%s#/%s" % (prefix.replace('_definitions.json', output_filename(*group_version_kind(title))), title)})
+                else:
+                    contents["oneOf"].append({"$ref": "%s#/definitions/%s" % (prefix, title)})
             else:
                 contents["oneOf"].append({"$ref": (title.replace("#/components/schemas/", "") + ".json")})
         all_file.write(json.dumps(contents, indent=2))
+
+    if stand_alone:
+        os.remove("%s/_definitions.json" % output)
 
 
 if __name__ == '__main__':
