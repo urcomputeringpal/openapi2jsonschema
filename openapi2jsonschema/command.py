@@ -10,6 +10,19 @@ from jsonref import JsonRef
 import click
 
 
+KINDS_WITH_JSONSCHEMA = [
+    "jsonschemaprops",
+    "jsonschemapropsorarray",
+    "customresourcevalidation",
+    "customresourcedefinition",
+    "customresourcedefinitionspec",
+    "customresourcedefinitionlist",
+    "customresourcedefinitionspec",
+    "customresourcedefinitionversion",
+    "jsonschemapropsorstringarray",
+    "jsonschemapropsorbool",
+]
+
 class UnsupportedError(Exception):
     pass
 
@@ -207,7 +220,7 @@ def default(output, schema, prefix, stand_alone, kubernetes, strict):
 
             # This list of Kubernets types carry around jsonschema for Kubernetes and don't
             # currently work with openapi2jsonschema
-            if kubernetes and stand_alone and kind in ["jsonschemaprops", "jsonschemapropsorarray", "customresourcevalidation", "customresourcedefinition", "customresourcedefinitionspec", "customresourcedefinitionlist", "customresourcedefinitionspec", "jsonschemapropsorstringarray", "jsonschemapropsorbool"]:
+            if kubernetes and stand_alone and kind in KINDS_WITH_JSONSCHEMA:
                 raise UnsupportedError("%s not currently supported" % kind)
 
             if stand_alone:
